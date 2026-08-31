@@ -1,8 +1,0 @@
-{
-  "name":"night-chamber-worker",
-  "private":true,
-  "version":"0.4.0",
-  "type":"module",
-  "scripts":{"deploy":"wrangler deploy","dev":"wrangler dev","typecheck":"tsc --noEmit"},
-  "devDependencies":{"@cloudflare/workers-types": "latest","typescript":"^5.9.0","wrangler":"^4.127.1"}
-}
