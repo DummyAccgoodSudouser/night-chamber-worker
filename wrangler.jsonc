@@ -1,0 +1,21 @@
+{
+  "$schema":"./node_modules/wrangler/config-schema.json",
+  "name":"night-chamber-worker",
+  "main":"src/index.ts",
+  "compatibility_date":"2026-08-31",
+  "compatibility_flags":["nodejs_compat"],
+  "vars":{
+    "FIREBASE_PROJECT_ID":"night-chamber-dev",
+    "ALLOWED_ORIGIN":"https://night-chamber.pages.dev"
+  },
+  "durable_objects":{
+    "bindings":[
+      {"name":"GAME_ROOM","class_name":"GameRoom"},
+      {"name":"LOBBY","class_name":"Lobby"}
+    ]
+  },
+  "migrations":[
+    {"tag":"v1","new_sqlite_classes":["GameRoom"]},
+    {"tag":"v2","new_sqlite_classes":["Lobby"]}
+  ]
+}
