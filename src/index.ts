@@ -12,9 +12,11 @@ export interface Env {
 }
 
 function cors(origin: string | null, allowedOrigin: string) {
+  const allowed =
+    origin && origin === allowedOrigin ? origin : allowedOrigin;
+
   return {
-    "access-control-allow-origin":
-      origin === allowedOrigin ? origin : allowedOrigin,
+    "access-control-allow-origin": allowed,
     "access-control-allow-headers": "Authorization, Content-Type",
     "access-control-allow-methods": "GET, POST, OPTIONS",
     "access-control-max-age": "86400",
@@ -22,12 +24,17 @@ function cors(origin: string | null, allowedOrigin: string) {
   };
 }
 
-function withCors(response: Response, request: Request, env: Env) {
+function withCors(
+  response: Response,
+  request: Request,
+  env: Env
+): Response {
   const headers = new Headers(response.headers);
 
-  for (const [key, value] of Object.entries(
-    cors(request.headers.get("origin"), env.ALLOWED_ORIGIN),
-  )) {
+  const origin = request.headers.get("origin");
+  const corsHeaders = cors(origin, env.ALLOWED_ORIGIN);
+
+  for (const [key, value] of Object.entries(corsHeaders)) {
     headers.set(key, value);
   }
 
@@ -39,7 +46,10 @@ function withCors(response: Response, request: Request, env: Env) {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(
+    request: Request,
+    env: Env
+  ): Promise<Response> {
     const url = new URL(request.url);
     const origin = request.headers.get("origin");
 
@@ -52,7 +62,10 @@ export default {
     }
 
     // Origin protection
-    if (origin && origin !== env.ALLOWED_ORIGIN) {
+    if (
+      origin &&
+      origin !== env.ALLOWED_ORIGIN
+    ) {
       return new Response(
         JSON.stringify({
           ok: false,
@@ -64,27 +77,36 @@ export default {
             "content-type": "application/json",
             ...cors(origin, env.ALLOWED_ORIGIN),
           },
-        },
+        }
       );
     }
 
-    // Health check does not require authentication
+    // Health check
     if (url.pathname === "/api/health") {
-      return Response.json({
-        ok: true,
-        version: "1.2.0",
-        service: "night-chamber-worker",
-        durableObjects: true,
-      });
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          version: "1.2.0",
+          service: "night-chamber-worker",
+          durableObjects: true,
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            ...cors(origin, env.ALLOWED_ORIGIN),
+          },
+        }
+      );
     }
 
+    // Authentication
     let auth: any = null;
 
-    // Authenticate API requests
     if (url.pathname.startsWith("/api/")) {
       const result = await requireAuth(
         request,
-        env.FIREBASE_PROJECT_ID,
+        env.FIREBASE_PROJECT_ID
       );
 
       if (result instanceof Response) {
@@ -95,19 +117,21 @@ export default {
     }
 
     try {
-      const lobby = env.LOBBY.get(
-        env.LOBBY.idFromName("global"),
-      );
+      const lobbyId = env.LOBBY.idFromName("global");
+      const lobby = env.LOBBY.get(lobbyId);
 
       // Create room
       if (
         request.method === "POST" &&
         url.pathname === "/api/rooms"
       ) {
-        const body = await request.json().catch(() => ({}));
+        const body = await request
+          .json()
+          .catch(() => ({}));
 
-        const response = await lobby.fetch(
-          new Request("https://lobby/create", {
+        const roomRequest = new Request(
+          "https://lobby/create",
+          {
             method: "POST",
             headers: {
               "content-type": "application/json",
@@ -116,10 +140,18 @@ export default {
               ...body,
               uid: auth.uid,
             }),
-          }),
+          }
         );
 
-        return withCors(response, request, env);
+        const response = await lobby.fetch(
+          roomRequest
+        );
+
+        return withCors(
+          response,
+          request,
+          env
+        );
       }
 
       // Public rooms
@@ -128,71 +160,93 @@ export default {
         url.pathname === "/api/rooms/public"
       ) {
         const response = await lobby.fetch(
-          new Request("https://lobby/public"),
+          new Request("https://lobby/public")
         );
 
-        return withCors(response, request, env);
+        return withCors(
+          response,
+          request,
+          env
+        );
       }
 
-      // Get room
+      // Get room information
       const roomInfo = url.pathname.match(
-        /^\/api\/rooms\/([A-Z0-9]{6})$/,
+        /^\/api\/rooms\/([A-Z0-9]{6})$/
       );
 
       if (
         request.method === "GET" &&
         roomInfo
       ) {
+        const roomCode = roomInfo[1];
+
         const response = await lobby.fetch(
           new Request(
-            "https://lobby/room/" + roomInfo[1],
-          ),
+            `https://lobby/room/${roomCode}`
+          )
         );
 
-        return withCors(response, request, env);
+        return withCors(
+          response,
+          request,
+          env
+        );
       }
 
       // Join room
-      const joinInfo = url.pathname.match(
-        /^\/api\/rooms\/([A-Z0-9]{6})\/join$/,
+      const joinMatch = url.pathname.match(
+        /^\/api\/rooms\/([A-Z0-9]{6})\/join$/
       );
 
       if (
         request.method === "POST" &&
-        joinInfo
+        joinMatch
       ) {
-        const response = await lobby.fetch(
-          new Request(
-            "https://lobby/room/" + joinInfo[1],
-          ),
-        );
+        const roomCode = joinMatch[1];
 
-        if (!response.ok) {
-          return withCors(response, request, env);
+        const roomResponse =
+          await lobby.fetch(
+            new Request(
+              `https://lobby/room/${roomCode}`
+            )
+          );
+
+        if (!roomResponse.ok) {
+          return withCors(
+            roomResponse,
+            request,
+            env
+          );
         }
 
-        const data = (await response.json()) as any;
+        const data =
+          (await roomResponse.json()) as any;
 
         if (!data.room) {
           return withCors(
             new Response(
               JSON.stringify({
                 ok: false,
-                message: "Room data unavailable.",
+                message:
+                  "Room data unavailable.",
               }),
               {
                 status: 500,
                 headers: {
-                  "content-type": "application/json",
+                  "content-type":
+                    "application/json",
                 },
-              },
+              }
             ),
             request,
-            env,
+            env
           );
         }
 
-        if (data.room.status === "finished") {
+        const room = data.room;
+
+        if (room.status === "finished") {
           return withCors(
             new Response(
               JSON.stringify({
@@ -202,16 +256,19 @@ export default {
               {
                 status: 409,
                 headers: {
-                  "content-type": "application/json",
+                  "content-type":
+                    "application/json",
                 },
-              },
+              }
             ),
             request,
-            env,
+            env
           );
         }
 
-        if (data.room.players >= data.room.maxPlayers) {
+        if (
+          room.players >= room.maxPlayers
+        ) {
           return withCors(
             new Response(
               JSON.stringify({
@@ -221,59 +278,83 @@ export default {
               {
                 status: 409,
                 headers: {
-                  "content-type": "application/json",
+                  "content-type":
+                    "application/json",
                 },
-              },
+              }
             ),
             request,
-            env,
+            env
           );
         }
 
+        // Forward the actual join to the lobby.
+        const joinResponse =
+          await lobby.fetch(
+            new Request(
+              `https://lobby/room/${roomCode}/join`,
+              {
+                method: "POST",
+                headers: {
+                  "content-type":
+                    "application/json",
+                },
+                body: JSON.stringify({
+                  uid: auth.uid,
+                }),
+              }
+            )
+          );
+
         return withCors(
-          new Response(JSON.stringify(data.room), {
-            status: 200,
-            headers: {
-              "content-type": "application/json",
-            },
-          }),
+          joinResponse,
           request,
-          env,
+          env
         );
       }
 
-      // WebSocket game connection
-      const wsInfo = url.pathname.match(
-        /^\/ws\/([A-Z0-9]{6})$/,
-      );
+      // WebSocket connection
+      const websocketMatch =
+        url.pathname.match(
+          /^\/ws\/([A-Z0-9]{6})$/
+        );
 
-      if (wsInfo) {
+      if (websocketMatch) {
         if (
           request.headers.get("Upgrade") !==
           "websocket"
         ) {
           return new Response(
             "WebSocket upgrade required",
-            { status: 426 },
+            {
+              status: 426,
+            }
           );
         }
 
-        const response = await lobby.fetch(
-          new Request(
-            "https://lobby/room/" + wsInfo[1],
-          ),
-        );
+        const roomCode =
+          websocketMatch[1];
 
-        if (!response.ok) {
-          return withCors(response, request, env);
+        const roomResponse =
+          await lobby.fetch(
+            new Request(
+              `https://lobby/room/${roomCode}`
+            )
+          );
+
+        if (!roomResponse.ok) {
+          return roomResponse;
         }
 
-        const data = (await response.json()) as any;
+        const data =
+          (await roomResponse.json()) as any;
 
         if (!data.room) {
           return new Response(
             "Room unavailable",
-            { status: 404 },
+            {
+              status: 404,
+            }
           );
         }
 
@@ -283,50 +364,78 @@ export default {
         ) {
           return new Response(
             "Room full",
-            { status: 409 },
+            {
+              status: 409,
+            }
           );
         }
 
-        const room = env.GAME_ROOM.get(
+        const gameRoomId =
           env.GAME_ROOM.idFromName(
-            data.room.id,
-          ),
-        );
+            data.room.id
+          );
 
-        const forwardedRequest = new Request(
-          request,
-        );
+        const gameRoom =
+          env.GAME_ROOM.get(gameRoomId);
+
+        const forwardedRequest =
+          new Request(request);
 
         forwardedRequest.headers.set(
           "x-room-code",
-          wsInfo[1],
+          roomCode
         );
 
-        return room.fetch(forwardedRequest);
+        forwardedRequest.headers.set(
+          "x-user-id",
+          auth.uid
+        );
+
+        return gameRoom.fetch(
+          forwardedRequest
+        );
       }
 
-      return new Response(
-        "Night Chamber Worker 1.2.0",
-      );
-    } catch (error) {
+      // Unknown route
       return withCors(
         new Response(
           JSON.stringify({
             ok: false,
-            message:
-              error instanceof Error
-                ? error.message
-                : "Internal server error.",
+            message: "Not found.",
+          }),
+          {
+            status: 404,
+            headers: {
+              "content-type":
+                "application/json",
+            },
+          }
+        ),
+        request,
+        env
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Internal server error.";
+
+      return withCors(
+        new Response(
+          JSON.stringify({
+            ok: false,
+            message,
           }),
           {
             status: 500,
             headers: {
-              "content-type": "application/json",
+              "content-type":
+                "application/json",
             },
-          },
+          }
         ),
         request,
-        env,
+        env
       );
     }
   },
